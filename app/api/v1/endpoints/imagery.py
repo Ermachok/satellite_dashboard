@@ -1,73 +1,39 @@
-from fastapi import APIRouter, Query
+from datetime import date as dt
 from typing import Optional
-from app.services.gibs import get_layer_tile
-from app.services.tiles import deg2num
+
+import httpx
+from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 
+LAYER_MAP = {
+    "clouds": "MODIS_Terra_Cloud_FR",
+    "fires": "VIIRS_SNPP_Thermal_Anomalies_NRT",
+    "no2": "TROPOMI_NO2",
+    "co": "TROPOMI_CO",
+}
 
-def get_tile_response(
-        layer: str,
-        z: int,
-        x: Optional[int],
-        y: Optional[int],
-        lat: Optional[float],
-        lon: Optional[float],
-        date: Optional[str],
+
+@router.get("/api/tiles/clouds/{z}/{x}/{y}.jpg")
+async def get_cloud_tile(
+    z: int = Path(..., ge=0, le=9),
+    x: int = Path(...),
+    y: int = Path(...),
+    date: Optional[str] = Query(None),
 ):
-    if lat is not None and lon is not None:
-        x, y = deg2num(lat, lon, z)
-    elif x is None or y is None:
-        return {"error": "Either provide x and y or lat and lon"}
+    if not date:
+        date = dt.today().isoformat()
 
-    url = get_layer_tile(layer, z, x, y, date)
-    return {"tile_url": url}
+    nasa_url = (
+        f"https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/"
+        f"MODIS_Terra_CorrectedReflectance_TrueColor/default/{date}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg"
+    )
 
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(nasa_url)
 
-@router.get("/clouds")
-def get_cloud_tile(
-        z: int = Query(5, ge=0, le=9),
-        x: Optional[int] = None,
-        y: Optional[int] = None,
-        lat: Optional[float] = None,
-        lon: Optional[float] = None,
-        date: Optional[str] = None,
-):
-    return get_tile_response("MODIS_Terra_Cloud_FR", z, x, y, lat, lon, date)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Tile not found")
 
-
-@router.get("/fires")
-def get_fire_tile(
-        z: int = Query(5, ge=0, le=9),
-        x: Optional[int] = None,
-        y: Optional[int] = None,
-        lat: Optional[float] = None,
-        lon: Optional[float] = None,
-        date: Optional[str] = None,
-):
-    return get_tile_response("VIIRS_SNPP_Thermal_Anomalies_NRT", z, x, y, lat, lon, date)
-
-
-@router.get("/no2")
-def get_no2_tile(
-        z: int = Query(5, ge=0, le=9),
-        x: Optional[int] = None,
-        y: Optional[int] = None,
-        lat: Optional[float] = None,
-        lon: Optional[float] = None,
-        date: Optional[str] = None,
-):
-    return get_tile_response("TROPOMI_NO2", z, x, y, lat, lon, date)
-
-
-@router.get("/co")
-def get_co_tile(
-        z: int = Query(5, ge=0, le=9),
-        x: Optional[int] = None,
-        y: Optional[int] = None,
-        lat: Optional[float] = None,
-        lon: Optional[float] = None,
-        date: Optional[str] = None,
-):
-    return get_tile_response("TROPOMI_CO", z, x, y, lat, lon, date)
-
+    return StreamingResponse(resp.aiter_bytes(), media_type="image/jpeg")

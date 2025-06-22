@@ -1,8 +1,10 @@
-from fastapi import APIRouter
 import json
 from pathlib import Path
 
+from fastapi import APIRouter
+
 router = APIRouter()
+
 
 @router.get("/layers")
 def get_layers():
